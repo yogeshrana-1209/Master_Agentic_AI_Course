@@ -1,23 +1,23 @@
 """
-todo_agent_groq.py
-==================
-An AI-powered todo agent that plans and solves word problems step-by-step
-using Groq's OpenAI-compatible API with function/tool calling.
+todo_agent.py
+=============
+An AI-powered todo agent that plans and solves problems step-by-step
+using OpenRouter's free model tier with function/tool calling.
 
 Setup
 -----
-1. Create a free account at https://console.groq.com and generate an API key.
+1. Create a free account at https://openrouter.ai and generate an API key.
 2. Add the key to your .env file:
 
-       GROQ_API_KEY=gsk_...
+    OPENROUTER_API_KEY=sk-or-v1-...
 
 3. Install dependencies:
 
-       pip install openai python-dotenv rich
+    pip install openai python-dotenv rich
 
 Usage
 -----
-    python todo_agent_groq.py
+    python todo_agent.py
 """
 
 from __future__ import annotations
@@ -31,6 +31,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 from openai.types.chat import ChatCompletionMessageParam
 from rich.console import Console
+from rich.prompt import Prompt
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -38,8 +39,16 @@ from rich.console import Console
 
 load_dotenv(override=True)
 
-GROQ_BASE_URL = "https://api.groq.com/openai/v1"
-MODEL = "llama-3.3-70b-versatile"
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+
+# "openrouter/free" auto-selects the best available free model and smartly
+# filters for models that support the features your request needs (tool calling).
+# This means no hardcoded model names that can get decommissioned.
+MODEL = "openrouter/free"
+
+# Optional: shown in OpenRouter's analytics dashboard.
+APP_TITLE = "Todo Agent"
+APP_SITE_URL = "https://github.com/your-username/todo-agent"
 
 console = Console()
 logger = logging.getLogger(__name__)
@@ -193,6 +202,10 @@ def run_agent(
             model=MODEL,
             messages=messages,
             tools=TOOLS,  # type: ignore[arg-type]
+            extra_headers={
+                "HTTP-Referer": APP_SITE_URL,
+                "X-Title": APP_TITLE,
+            },
         )
 
         choice = response.choices[0]
@@ -222,12 +235,6 @@ Rules:
 - Do not ask the user for clarification; respond only with the answer after using your tools.
 """
 
-USER_MESSAGE = """\
-A train leaves Boston at 2:00 pm traveling 60 mph.
-Another train leaves New York at 3:00 pm traveling 80 mph toward Boston.
-When do they meet?
-"""
-
 # ---------------------------------------------------------------------------
 # Client factory
 # ---------------------------------------------------------------------------
@@ -235,7 +242,7 @@ When do they meet?
 
 def build_client() -> OpenAI:
     """
-    Construct an OpenAI client configured to use Groq's API.
+    Construct an OpenAI client configured to use OpenRouter's API.
 
     Returns
     -------
@@ -245,20 +252,20 @@ def build_client() -> OpenAI:
     Raises
     ------
     EnvironmentError
-        If ``GROQ_API_KEY`` is not set in the environment.
+        If ``OPENROUTER_API_KEY`` is not set in the environment.
     """
-    api_key = os.getenv("GROQ_API_KEY")
+    api_key = os.getenv("OPENROUTER_API_KEY")
     if not api_key:
         raise EnvironmentError(
-            "GROQ_API_KEY is not set.\n"
-            "  1. Create a free account at https://console.groq.com\n"
+            "OPENROUTER_API_KEY is not set.\n"
+            "  1. Create a free account at https://openrouter.ai\n"
             "  2. Generate an API key\n"
-            "  3. Add  GROQ_API_KEY=gsk_...  to your .env file"
+            "  3. Add  OPENROUTER_API_KEY=sk-or-v1-...  to your .env file"
         )
 
     return OpenAI(
         api_key=api_key,
-        base_url=GROQ_BASE_URL,
+        base_url=OPENROUTER_BASE_URL,
     )
 
 
@@ -268,18 +275,34 @@ def build_client() -> OpenAI:
 
 
 def main() -> None:
-    """Initialise the Groq client and run the agent against the sample problem."""
+    """Ask the user for a question, then run the agent to solve it."""
     client = build_client()
 
-    todos.clear()
-    completed.clear()
+    console.print("\n[bold cyan]🤖 AI Todo Agent (powered by OpenRouter)[/bold cyan]")
+    console.print("[dim]Type your question and press Enter. Type 'exit' to quit.[/dim]\n")
 
-    messages: list[ChatCompletionMessageParam] = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": USER_MESSAGE},
-    ]
+    while True:
+        user_question = Prompt.ask("[bold yellow]Your Question[/bold yellow]").strip()
 
-    run_agent(client, messages)
+        if not user_question:
+            console.print("[red]Please enter a question.[/red]\n")
+            continue
+
+        if user_question.lower() in {"exit", "quit", "q"}:
+            console.print("\n[dim]Goodbye! 👋[/dim]")
+            break
+
+        todos.clear()
+        completed.clear()
+
+        messages: list[ChatCompletionMessageParam] = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_question},
+        ]
+
+        console.print("\n[dim]🧠 Thinking...[/dim]\n")
+        run_agent(client, messages)
+        console.print("\n" + "─" * 60 + "\n")
 
 
 if __name__ == "__main__":
