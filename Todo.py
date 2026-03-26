@@ -1,14 +1,30 @@
 """
-todo_agent.py
-=============
+todo_agent_groq.py
+==================
 An AI-powered todo agent that plans and solves word problems step-by-step
-using OpenAI function calling with a simple in-memory todo list.
+using Groq's OpenAI-compatible API with function/tool calling.
+
+Setup
+-----
+1. Create a free account at https://console.groq.com and generate an API key.
+2. Add the key to your .env file:
+
+       GROQ_API_KEY=gsk_...
+
+3. Install dependencies:
+
+       pip install openai python-dotenv rich
+
+Usage
+-----
+    python todo_agent_groq.py
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import os
 from typing import Any
 
 from dotenv import load_dotenv
@@ -22,8 +38,8 @@ from rich.console import Console
 
 load_dotenv(override=True)
 
-MODEL = "gpt-4o"
-REASONING_EFFORT = "none"
+GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+MODEL = "llama-3.3-70b-versatile"
 
 console = Console()
 logger = logging.getLogger(__name__)
@@ -54,14 +70,7 @@ def show(text: str) -> None:
 
 
 def get_todo_report() -> str:
-    """
-    Build and display a Rich-formatted todo report.
-
-    Returns
-    -------
-    str
-        The formatted report string.
-    """
+    """Build and display a Rich-formatted todo report."""
     lines: list[str] = []
     for index, (todo, done) in enumerate(zip(todos, completed), start=1):
         if done:
@@ -75,40 +84,14 @@ def get_todo_report() -> str:
 
 
 def create_todos(descriptions: list[str]) -> str:
-    """
-    Append new todo items and return the updated report.
-
-    Parameters
-    ----------
-    descriptions:
-        A list of todo descriptions to add.
-
-    Returns
-    -------
-    str
-        The updated todo report.
-    """
+    """Append new todo items and return the updated report."""
     todos.extend(descriptions)
     completed.extend([False] * len(descriptions))
     return get_todo_report()
 
 
 def mark_complete(index: int, completion_notes: str) -> str:
-    """
-    Mark the todo at *index* (1-based) as complete and log notes.
-
-    Parameters
-    ----------
-    index:
-        1-based position of the todo to complete.
-    completion_notes:
-        Rich markup string describing how the todo was completed.
-
-    Returns
-    -------
-    str
-        The updated todo report, or an error message if *index* is invalid.
-    """
+    """Mark the todo at *index* (1-based) as complete and log notes."""
     if not (1 <= index <= len(todos)):
         return f"Error: No todo at index {index}."
 
@@ -118,14 +101,12 @@ def mark_complete(index: int, completion_notes: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Tool schemas (OpenAI function definitions)
+# Tool schemas
 # ---------------------------------------------------------------------------
 
 CREATE_TODOS_SCHEMA: dict[str, Any] = {
     "name": "create_todos",
-    "description": (
-        "Add new todos from a list of descriptions and return the full list."
-    ),
+    "description": "Add new todos from a list of descriptions and return the full list.",
     "parameters": {
         "type": "object",
         "properties": {
@@ -143,9 +124,7 @@ CREATE_TODOS_SCHEMA: dict[str, Any] = {
 
 MARK_COMPLETE_SCHEMA: dict[str, Any] = {
     "name": "mark_complete",
-    "description": (
-        "Mark complete the todo at the given 1-based position and return the full list."
-    ),
+    "description": "Mark complete the todo at the given 1-based position and return the full list.",
     "parameters": {
         "type": "object",
         "properties": {
@@ -170,7 +149,6 @@ TOOLS: list[dict[str, Any]] = [
     {"type": "function", "function": MARK_COMPLETE_SCHEMA},
 ]
 
-# Map tool names to their Python implementations for dispatch
 TOOL_REGISTRY: dict[str, Any] = {
     "create_todos": create_todos,
     "mark_complete": mark_complete,
@@ -182,19 +160,7 @@ TOOL_REGISTRY: dict[str, Any] = {
 
 
 def handle_tool_calls(tool_calls: list[Any]) -> list[dict[str, str]]:
-    """
-    Execute all tool calls and return their results as OpenAI tool-role messages.
-
-    Parameters
-    ----------
-    tool_calls:
-        Tool call objects returned by the model.
-
-    Returns
-    -------
-    list[dict[str, str]]
-        A list of ``{"role": "tool", "content": ..., "tool_call_id": ...}`` dicts.
-    """
+    """Execute all tool calls and return their results as tool-role messages."""
     results: list[dict[str, str]] = []
     for call in tool_calls:
         tool_name: str = call.function.name
@@ -203,7 +169,7 @@ def handle_tool_calls(tool_calls: list[Any]) -> list[dict[str, str]]:
         handler = TOOL_REGISTRY.get(tool_name)
         if handler is None:
             logger.warning("Unknown tool requested: %s", tool_name)
-            result = f"Error: tool '{tool_name}' not found."
+            result: Any = f"Error: tool '{tool_name}' not found."
         else:
             result = handler(**arguments)
 
@@ -221,22 +187,12 @@ def run_agent(
     client: OpenAI,
     messages: list[ChatCompletionMessageParam],
 ) -> None:
-    """
-    Drive the agentic loop until the model stops requesting tool calls.
-
-    Parameters
-    ----------
-    client:
-        An initialised ``OpenAI`` client.
-    messages:
-        Conversation history including the system and initial user message.
-    """
+    """Drive the agentic loop until the model stops requesting tool calls."""
     while True:
         response = client.chat.completions.create(
             model=MODEL,
             messages=messages,
             tools=TOOLS,  # type: ignore[arg-type]
-            reasoning_effort=REASONING_EFFORT,  # type: ignore[call-arg]
         )
 
         choice = response.choices[0]
@@ -273,15 +229,48 @@ When do they meet?
 """
 
 # ---------------------------------------------------------------------------
+# Client factory
+# ---------------------------------------------------------------------------
+
+
+def build_client() -> OpenAI:
+    """
+    Construct an OpenAI client configured to use Groq's API.
+
+    Returns
+    -------
+    OpenAI
+        A configured client instance.
+
+    Raises
+    ------
+    EnvironmentError
+        If ``GROQ_API_KEY`` is not set in the environment.
+    """
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        raise EnvironmentError(
+            "GROQ_API_KEY is not set.\n"
+            "  1. Create a free account at https://console.groq.com\n"
+            "  2. Generate an API key\n"
+            "  3. Add  GROQ_API_KEY=gsk_...  to your .env file"
+        )
+
+    return OpenAI(
+        api_key=api_key,
+        base_url=GROQ_BASE_URL,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
 
 def main() -> None:
-    """Initialise the agent and run it against the sample problem."""
-    client = OpenAI()
+    """Initialise the Groq client and run the agent against the sample problem."""
+    client = build_client()
 
-    # Reset state for a clean run
     todos.clear()
     completed.clear()
 
